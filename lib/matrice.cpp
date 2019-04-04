@@ -7,18 +7,28 @@
 using namespace std;
 using namespace Eigen;
 
-Matrice::Matrice(MatrixXf m, int r, int c){
 
+//Constractor
+Matrice::Matrice(MatrixXf m, int r, int c){
 	Matrice::matrix.resize(r, c);
 	Matrice::matrix= m;
 }
+
+
+//function used to campare eigenvalues, return of this function is used to sort the list of Eigens
+bool mycompare(const Eigens& a, const Eigens& b)
+      {
+      	return a.lambdaVal > b.lambdaVal;
+      }
+
 
 void Matrice::printVal(){
 	cout<< Matrice::matrix << endl;
 }
 
-//function that calculates the mean of a mat
-VectorXf Matrice::calculateBar(MatrixXf mat){
+
+//calculate Arithmitic Mean -> vector
+VectorXf Matrice::calculateAMean(MatrixXf mat){
 	VectorXf vect(mat.cols());
 	for (int i = 0; i < mat.cols(); i++){
 		vect(i) = mat.col(i).mean();
@@ -26,14 +36,14 @@ VectorXf Matrice::calculateBar(MatrixXf mat){
 	return vect;
 }
 
+//center the point's cloud
 MatrixXf Matrice::center(){
 	//calculating X-bar(Arithmetic mean)
 	VectorXf xbar(matrix.cols());
-	xbar = Matrice::calculateBar(matrix);
+	xbar = Matrice::calculateAMean(matrix);
 
-	cout << "x bar : \n" << xbar <<endl;
 
-	//calculating the new centered mat
+	//calculating the new centered matrix
 	MatrixXf centeredMat(matrix.rows(), matrix.cols());
 	for (int i = 0; i < matrix.cols(); i++){
 		for (int j = 0; j < matrix.rows(); j++){
@@ -41,45 +51,132 @@ MatrixXf Matrice::center(){
 		}
 	}
 
-	cout<< "centered mat : \n" << centeredMat <<endl;
+	cout<< endl << "Centered matrix : \n" << centeredMat <<endl;
 	return centeredMat;
 }
 
+
+//Reduce the matrix(oprional)
 MatrixXf Matrice::reduce(MatrixXf centered){
-	//calculating X-bar(Arithmetic mean)
-		VectorXf centeredBar(centered.cols());
-		centeredBar = Matrice::calculateBar(centered);
+	//calculating (Arithmetic mean) of the centred matrix
+		VectorXf centeredAMean(centered.cols());
+		centeredAMean = Matrice::calculateAMean(centered);
 
-		cout << "centered bar :\m" << centeredBar << endl;
-
-		//calculating the new centered mat
-		MatrixXf yMat(centered.rows(), centered.cols());
+		//calculating temporary values of the matrix for the variance
+		MatrixXf tempVarianceMat(centered.rows(), centered.cols());
 		for (int i = 0; i < centered.cols(); i++){
 			for (int j = 0; j < centered.rows(); j++){
-				yMat(j,i) = pow(centered(j,i) - centeredBar(i),2);
+				tempVarianceMat(j,i) = pow(centered(j,i) - centeredAMean(i),2);
 			}
 		}
-		cout << "y mat \n" << yMat <<endl;
 
+        //variance
 		VectorXf variance(centered.cols());
-		variance = calculateBar(yMat);
-		//calculating ecart-type
+		variance = calculateAMean(tempVarianceMat);
+
+		//calculating Standard diviation (ecart-type)
 		for (int i = 0; i < centered.cols(); i++){
 			variance(i) = sqrt(variance(i));
 		}
-		cout << "variance \n" << variance <<endl;
 
-		MatrixXf zmat(centered.rows(), centered.cols());
+
+		MatrixXf reduced(centered.rows(), centered.cols());
 				for (int i = 0; i < centered.cols(); i++){
 					for (int j = 0; j < centered.rows(); j++){
-						zmat(j,i) = centered(j,i) / variance(i);
+						reduced(j,i) = centered(j,i) / variance(i);
 					}
 				}
 
-	return zmat;
+
+		cout << endl << "Cebtred/Reduced Matrix\n" << reduced <<endl;
+
+	return reduced;
 }
 
+
+//calculate eigen vactors associated with eigen values along with the inertie
+list<Eigens> Matrice::eigenCalculator(MatrixXf reduced){
+	//calculating Z^t.Z
+	MatrixXf zMat = reduced.transpose()*reduced;
+
+	cout<< endl << "X^t.X Matrix: \n" << zMat <<endl;
+	cout << endl;
+
+	//defining the solver
+	EigenSolver<MatrixXf> eigensolver(zMat);
+
+	//getting only the real part from the eigen vectors and values
+	MatrixXf eigenVect = eigensolver.eigenvectors().real();
+	VectorXf eigenVals = eigensolver.eigenvalues().real();
+
+	//normalize eigen values
+	for (int i; i < eigenVals.size(); i++){
+		eigenVals(i) = (int)(eigenVals(i)*1000.0)/1000.0;
+	}
+
+
+	//constructing the list
+	//sum of all inerties
+	float inertieSum = eigenVals.sum();
+	list<Eigens> data;
+	for (int i=0; i < eigenVect.cols() ; i++){
+	  	Eigens eigobj;
+	  	eigobj.lambdaVal = eigenVals(i);
+	  	eigobj.inertie = eigenVals(i)/inertieSum;
+	  	VectorXf tempVect(eigenVect.rows());
+	  	for (int j=0;j < eigenVect.rows(); j++){
+	  		tempVect(j) = eigenVect(eigenVect.rows()*i+j);
+	  	}
+	  	eigobj.vectVal = tempVect;
+	  	data.push_back(eigobj);
+	}
+
+	//sorting the list
+	data.sort(mycompare);
+
+	//iterator to iterate through the list
+	list<Eigens>::iterator it;
+
+	//printing the list items
+	for (it = data.begin(); it != data.end(); it++){
+	       std::cout << "EigenValue: " << it->lambdaVal << "\n EigenVector : \n" << it->vectVal << endl;
+	}
+
+	return data;
+}
+
+
+//Calculate the result
+MatrixXf Matrice::calculateACP(list<Eigens> sortedList, float threshold){
+	//Initializing the matrix which conatains the chosen eigenvectors
+	MatrixXf PrincipaleComponents (matrix.rows(),0);
+
+	//initial inertie of the plan
+	float inertieSum = 0.0;
+
+	list<Eigens>::iterator it;
+	for (it = sortedList.begin(); it != sortedList.end(); it++){
+	       if(inertieSum>=threshold) {
+	    	   break;
+	       }
+
+	       inertieSum += it->inertie;
+
+	       //concatinating the EigenVectors
+	       PrincipaleComponents.conservativeResize(PrincipaleComponents.rows(), PrincipaleComponents.cols()+1);
+	       PrincipaleComponents.col(PrincipaleComponents.cols()-1) = it->vectVal;
+	   }
+
+	//Final Matrix
+	MatrixXf ACP_result = Matrice::matrix * PrincipaleComponents;
+
+	return ACP_result;
+}
+
+
+//All the process
 MatrixXf Matrice::ACP(float threshold, bool doReduce){
-	return Matrice::reduce(Matrice::center());
+	if (doReduce) return calculateACP(eigenCalculator(Matrice::reduce(Matrice::center())), threshold);
+	else return calculateACP(eigenCalculator(Matrice::center()), threshold);
 
 }
